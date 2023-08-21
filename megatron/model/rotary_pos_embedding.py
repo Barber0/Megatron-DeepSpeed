@@ -42,7 +42,7 @@ def _rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 
-def apply_rotary_pos_emb(t, freqs, start_idx=0):
+def apply_rotary_pos_emb(t, freqs):
     """
     input tensor t is of shape [seq_length, ..., dim]
     rotary positional embeding tensor freqs is of shape [seq_length, ..., dim]
@@ -52,8 +52,8 @@ def apply_rotary_pos_emb(t, freqs, start_idx=0):
     # ideally t_pass is empty so rotary pos embedding is applied to all tensor t
     t, t_pass = t[..., :rot_dim], t[..., rot_dim:]
 
-    if t.size(0) < freqs.size(0) or start_idx > 0:
-        tmp_freqs = freqs[start_idx:start_idx+t.size(0)]
+    if t.size(0) < freqs.size(0):
+        tmp_freqs = freqs[:t.size(0)]
     else:
         tmp_freqs = freqs
 

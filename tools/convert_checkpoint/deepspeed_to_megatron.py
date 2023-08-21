@@ -2,8 +2,10 @@
 
 import argparse
 import os
-import torch
 from collections import OrderedDict
+
+import torch
+
 from .deepspeed_checkpoint import ARGS_KEY, DeepSpeedCheckpoint
 
 MODEL_KEY = 'model'
