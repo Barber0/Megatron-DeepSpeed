@@ -5,8 +5,8 @@
 # common/megatron/rotary_pos_embedding.py
 
 import importlib.util
-import torch
 
+import torch
 from torch import einsum, nn
 
 __all__ = ['RotaryEmbedding', 'apply_rotary_pos_emb']
@@ -49,6 +49,10 @@ def apply_rotary_pos_emb(t, freqs):
     rot_dim = freqs.shape[-1]
     # ideally t_pass is empty so rotary pos embedding is applied to all tensor t
     t, t_pass = t[..., :rot_dim], t[..., rot_dim:]
+
+    # Ensure that the size of freqs matches t when developers use curriculum learning.
+    if t.size(0) < freqs.size(0):
+        freqs = freqs[:t.size(0)]
 
     # first part is cosine component
     # second part is sine component, need to change signs with _rotate_half method
