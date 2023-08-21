@@ -59,5 +59,6 @@ def apply_rotary_pos_emb(t, freqs):
 
     # first part is cosine component
     # second part is sine component, need to change signs with _rotate_half method
-    t = (t * tmp_freqs.cos()) + (_rotate_half(t) * tmp_freqs.sin())
+    t = (t * tmp_freqs.cos().to(t.dtype)) + \
+        (_rotate_half(t) * tmp_freqs.sin().to(t.dtype))
     return torch.cat((t, t_pass), dim=-1)

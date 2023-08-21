@@ -14,7 +14,7 @@ from .module import MegatronModule
 from .rotary_pos_embedding import apply_rotary_pos_emb, RotaryEmbedding
 from .transformer import ParallelTransformer
 from .utils import get_linear_layer
-from .utils import init_method_normal, scaled_init_method_normal
+from .utils import init_method_normal, scaled_init_method_normal, gather_and_init
 
 
 def parallel_lm_logits(input_, word_embeddings_weight, parallel_output,
@@ -96,7 +96,7 @@ class Pooler(MegatronModule):
     def __init__(self, hidden_size, init_method):
         super(Pooler, self).__init__()
         args = get_args()
-        self.dense = get_linear_layer(hidden_size, hidden_size, init_method)
+        self.dense = get_linear_layer(hidden_size, hidden_size, init_method, gather_params_on_init=args.zero_stage == 3)
         self.sequence_parallel = args.sequence_parallel
 
 
@@ -166,7 +166,10 @@ class Embedding(MegatronModule):
             self._position_embeddings_key = 'position_embeddings'
             # Initialize the position embeddings.
             if args.perform_initialization:
-                self.init_method(self.position_embeddings.weight)
+                if args.zero_stage == 3:
+                    gather_and_init(self.position_embeddings.weight, self.init_method)
+                else:
+                    self.init_method(self.position_embeddings.weight)
 
         # Token type embedding.
         # Add this as an optional field that can be added through
@@ -178,7 +181,10 @@ class Embedding(MegatronModule):
                                                            self.hidden_size)
             # Initialize the token-type embeddings.
             if args.perform_initialization:
-                self.init_method(self.tokentype_embeddings.weight)
+                if args.zero_stage == 3:
+                    gather_and_init(self.tokentype_embeddings.weight, self.init_method)
+                else:
+                    self.init_method(self.tokentype_embeddings.weight)
         else:
             self.tokentype_embeddings = None
 
@@ -432,6 +438,7 @@ class TransformerLanguageModel(MegatronModule):
                 self_attn_mask_type=self.encoder_attn_mask_type,
                 pre_process=self.pre_process,
                 post_process=self.post_process,
+                num_experts=self.num_experts
             )
             self._encoder_key = 'encoder'
         else:
@@ -532,7 +539,7 @@ class TransformerLanguageModel(MegatronModule):
         # Run encoder.
         if enc_hidden_states is None:
             if self.encoder is not None:
-                encoder_output, *moe_losses = self.encoder(
+                encoder_output, *encoder_moe_losses = self.encoder(
                     encoder_input,
                     enc_attn_mask,
                     retriever_input=retriever_input,
@@ -542,8 +549,7 @@ class TransformerLanguageModel(MegatronModule):
             else:
                 encoder_output = self.encoder_hidden_state
         else:
-            encoder_output = enc_hidden_states.to(encoder_input.dtype)
-            moe_losses = []
+            encoder_output, encoder_moe_losses = enc_hidden_states.to(encoder_input.dtype), []
 
         if self.post_process:
             if self.add_pooler:
@@ -555,9 +561,9 @@ class TransformerLanguageModel(MegatronModule):
         # similarity between two sequences by average pooling
         if not self.add_decoder or output_enc_hidden:
             if self.add_pooler and self.post_process:
-                return (encoder_output, pooled_output, *moe_losses)
+                return encoder_output, pooled_output, encoder_moe_losses
             else:
-                return (encoder_output, *moe_losses)
+                return encoder_output, encoder_moe_losses
 
         # Decoder embedding.
         if self.pre_process:
@@ -567,7 +573,7 @@ class TransformerLanguageModel(MegatronModule):
             decoder_input = None
 
         # Run decoder.
-        decoder_output, *moe_losses = self.decoder(
+        decoder_output, *decoder_moe_losses = self.decoder(
             decoder_input,
             dec_attn_mask,
             encoder_output=encoder_output,
@@ -576,9 +582,9 @@ class TransformerLanguageModel(MegatronModule):
             rotary_pos_emb=rotary_pos_emb)
 
         if self.add_pooler and self.post_process:
-            return (decoder_output, encoder_output, pooled_output, *moe_losses)
+            return decoder_output, encoder_output, pooled_output, decoder_moe_losses, encoder_moe_losses
         else:
-            return (decoder_output, encoder_output, *moe_losses)
+            return decoder_output, encoder_output, decoder_moe_losses, encoder_moe_losses
 
     def state_dict_for_save_checkpoint(self, prefix='', keep_vars=False):
         """For easy load."""
