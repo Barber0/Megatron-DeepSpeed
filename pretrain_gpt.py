@@ -81,10 +81,6 @@ def model_provider(pre_process=True, post_process=True):
                 # https://github.com/kingoflolz/mesh-transformer-jax/
                 rotary_pos_emb = RotaryEmbedding(rotary_dim)(args.seq_length).to(
                     get_accelerator().current_device_name())
-                if args.fp16:
-                    rotary_pos_emb = rotary_pos_emb.half()
-                elif args.bf16:
-                    rotary_pos_emb = rotary_pos_emb.bfloat16()
                 args.rotary_pos_emb = rotary_pos_emb
 
         else:
@@ -229,7 +225,7 @@ def calculate_mos_loss(args, stu_output, teacher_model, tokens, position_ids, at
                 position_ids = position_ids[:, :curriculum_seqlen].contiguous()
                 attention_mask = attention_mask[:, :, :curriculum_seqlen, :curriculum_seqlen].contiguous()
                 # No need to truncate labels as we do not need it for the teacher logits
-            tea_output, *tea_other_losses = teacher_model(tokens, position_ids, attention_mask)
+            tea_output, tea_other_losses = teacher_model(tokens, position_ids, attention_mask)
             assert stu_output.size() == tea_output.size(), 'teacher and student output should match in size. Student: {}, Teacher: {}, CL seq length {}'.format(stu_output.size(), tea_output.size(), args.curriculum_seqlen)
 
         student_logits = F.log_softmax(stu_output / kd_temp, dim=2)
@@ -259,13 +255,13 @@ def forward_step(data_iterator, model):
 
     if args.mos or args.kd:
         # The forward func can return either the loss or the logits, depending on whether passing in the labels or not.
-        stu_output, *other_losses = model(tokens, position_ids, attention_mask)
+        stu_output, other_losses = model(tokens, position_ids, attention_mask)
         if args.curriculum_learning_legacy and args.curriculum_seqlen < args.seq_length:
             assert args.curriculum_seqlen is not None
             labels = labels[:, :args.curriculum_seqlen].contiguous()
         output_tensor = tensor_parallel.vocab_parallel_cross_entropy(stu_output.contiguous().float(), labels)
     else:
-        output_tensor, *other_losses = model(tokens, position_ids, attention_mask,
+        output_tensor, other_losses = model(tokens, position_ids, attention_mask,
                                             labels=labels)
     if args.curriculum_learning_legacy and args.curriculum_seqlen < args.seq_length:
         loss_mask = loss_mask[:, :args.curriculum_seqlen].contiguous()

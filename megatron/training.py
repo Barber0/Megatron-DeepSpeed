@@ -2,52 +2,46 @@
 
 """Pretrain utilities."""
 
-from datetime import datetime
+import json
 import math
 import sys
 import time
-import json
+from datetime import datetime
+
 # The earliest we can measure the start time.
 _TRAIN_START_TIME = time.time()
-import torch
-from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
-
-from megatron import get_args
-from megatron import get_signal_handler
-from megatron import get_timers
-from megatron import get_tensorboard_writer
-from megatron import get_current_global_batch_size
-from megatron import get_num_microbatches
-from megatron import is_last_rank
-from megatron import update_num_microbatches
-from megatron.core import mpu, tensor_parallel
-from megatron import print_rank_0, is_rank_0
-from megatron import print_rank_last
-from megatron.checkpointing import load_checkpoint
-from megatron.checkpointing import save_checkpoint
-from megatron.model import Float16Module
-from megatron.model import GPTModel
-from megatron.core.enums import ModelType
-from megatron.optimizer import get_megatron_optimizer
-from megatron.initialize import initialize_megatron
-from megatron.initialize import write_args_to_tensorboard
-from megatron.initialize import set_jit_fusion_options
-from megatron.optimizer_param_scheduler import OptimizerParamScheduler
-from megatron.model import DistributedDataParallel as LocalDDP
-from megatron.utils import check_adlr_autoresume_termination
-from megatron.utils import unwrap_model
-from megatron.data.data_samplers import build_pretraining_data_loader
-from megatron.utils import calc_params_l2_norm
-from megatron.core.pipeline_parallel import get_forward_backward_func
-from megatron.utils import report_memory, throughput_calculator, checkpoint_throughput_calculator
-from megatron.model.vision.knn_monitor import compute_feature_bank
-from megatron.arguments import core_transformer_config_from_args
-
 import deepspeed
+import torch
 from deepspeed.accelerator import get_accelerator
 from deepspeed.compression.compress import init_compression, redundancy_clean
-from deepspeed.runtime.data_pipeline.data_routing.helper import convert_to_random_ltd
+from deepspeed.runtime.data_pipeline.data_routing.helper import \
+    convert_to_random_ltd
+from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
+
+from megatron import (get_args, get_current_global_batch_size,
+                      get_num_microbatches, get_signal_handler,
+                      get_tensorboard_writer, get_timers, is_last_rank,
+                      is_rank_0, print_rank_0, print_rank_last,
+                      update_num_microbatches)
+from megatron.arguments import core_transformer_config_from_args
+from megatron.checkpointing import load_checkpoint, save_checkpoint
+from megatron.core import mpu, tensor_parallel
+from megatron.core.enums import ModelType
+from megatron.core.pipeline_parallel import get_forward_backward_func
+from megatron.data.data_samplers import build_pretraining_data_loader
+from megatron.initialize import (initialize_megatron, set_jit_fusion_options,
+                                 write_args_to_tensorboard)
+from megatron.model import DistributedDataParallel as LocalDDP
+from megatron.model import Float16Module, GPTModel
 from megatron.model.transformer import ParallelTransformerLayer
+from megatron.model.vision.knn_monitor import compute_feature_bank
+from megatron.optimizer import get_megatron_optimizer
+from megatron.optimizer_param_scheduler import OptimizerParamScheduler
+from megatron.utils import (calc_params_l2_norm,
+                            check_adlr_autoresume_termination,
+                            checkpoint_throughput_calculator, report_memory,
+                            throughput_calculator, unwrap_model)
+
 
 def print_datetime(string):
     """Note that this call will sync across all ranks."""
@@ -123,8 +117,8 @@ def pretrain(train_valid_test_dataset_provider,
             args.curriculum_learning_legacy = args.deepspeed_configuration[ \
                 "curriculum_learning"]["enabled"]
         if args.curriculum_learning_legacy and not args.no_pipeline_parallel:
-            from deepspeed.runtime.data_pipeline.curriculum_scheduler \
-                import CurriculumScheduler
+            from deepspeed.runtime.data_pipeline.curriculum_scheduler import \
+                CurriculumScheduler
             args.curriculum_scheduler = CurriculumScheduler( \
                 args.deepspeed_configuration["curriculum_learning"])
         if "compression_training" in args.deepspeed_configuration:
@@ -478,7 +472,7 @@ def load_model_weights_only(model_provider_func):
 
     print_datetime('before load checkpoint')
     if args.load is not None:
-        iteration = load_checkpoint(model, optimizer, lr_scheduler, strict=True, load_only_weights=True)
+        iteration = load_checkpoint(model, optimizer, lr_scheduler, strict=True)
 
     print_datetime('after load checkpoint weights')
 
