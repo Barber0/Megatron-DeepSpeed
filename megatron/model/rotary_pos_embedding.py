@@ -52,13 +52,12 @@ def apply_rotary_pos_emb(t, freqs):
     # ideally t_pass is empty so rotary pos embedding is applied to all tensor t
     t, t_pass = t[..., :rot_dim], t[..., rot_dim:]
 
+    # Ensure that the size of freqs matches t when developers use curriculum learning.
     if t.size(0) < freqs.size(0):
-        tmp_freqs = freqs[:t.size(0)]
-    else:
-        tmp_freqs = freqs
+        freqs = freqs[:t.size(0)]
 
     # first part is cosine component
     # second part is sine component, need to change signs with _rotate_half method
-    t = (t * tmp_freqs.cos().to(t.dtype)) + \
-        (_rotate_half(t) * tmp_freqs.sin().to(t.dtype))
+    t = (t * freqs.cos().to(t.dtype)) + \
+        (_rotate_half(t) * freqs.sin().to(t.dtype))
     return torch.cat((t, t_pass), dim=-1)
