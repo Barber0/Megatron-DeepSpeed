@@ -12,18 +12,18 @@ NAME=sfllm_1b3
 
 NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 
-SAVE_PATH=/root/autodl-tmp/sfllm-1b3-test
+SAVE_PATH=/root/autodl-tmp/sfllm-1b3
 # SAVE_PATH=/root/autodl-tmp/sfllm-1b3-cl
-LOAD_PATH=/root/autodl-tmp/sfllm-1b3-cl
+LOAD_PATH=$SAVE_PATH
 
 VOCAB_FILE=/root/gpt2_tokenizer/gpt2-vocab.json
 MERGE_FILE=/root/gpt2_tokenizer/gpt2-merges.txt
-DATA_PATH=/root/autodl-tmp/pile0204_text_document
+DATA_PATH=/root/autodl-tmp/pile0003_text_document
 
 # BATCH_SIZE=22
 # GLOBAL_BATCH_SIZE=528
 BATCH_SIZE=26
-GLOBAL_BATCH_SIZE=546
+GLOBAL_BATCH_SIZE=572
 
 LOG_INTERVAL=500
 
@@ -58,7 +58,7 @@ ZERO_STAGE=1
 DATA_EFFICIENCY_SEED=8848
 
 template_json="${script_dir}/ds_cfg_tpl.txt"
-config_json="${script_dir}ds_cfg_${NAME}.json"
+config_json="${script_dir}/ds_cfg_${NAME}.json"
 sed "s/CONFIG_BATCH_SIZE/${GLOBAL_BATCH_SIZE}/" ${template_json} \
     | sed "s/CONFIG_MBSIZE/${BATCH_SIZE}/" \
     | sed "s/LOG_INTERVAL/${LOG_INTERVAL}/" \
@@ -89,6 +89,7 @@ GPT_ARGS="
     --max-position-embeddings ${SEQ_LEN} \
     --attention-dropout 0 \
     --hidden-dropout 0 \
+    --fp16-lm-cross-entropy \
 
     --use-rotary-position-embeddings \
     --micro-batch-size ${BATCH_SIZE} \
@@ -124,7 +125,7 @@ DATA_ARGS="
 
 OUTPUT_ARGS="
     --log-interval ${LOG_INTERVAL} \
-    --save-interval 500 \
+    --save-interval 100 \
     --eval-interval 1000 \
     --eval-iters 10 \
     --tensorboard-dir /root/mega-logs-1b3
@@ -137,4 +138,4 @@ deepspeed pretrain_gpt.py \
     --distributed-backend nccl \
     --save $SAVE_PATH \
     --load $LOAD_PATH \
-    $DS_ARGS
+    $DS_ARGS | tee ${script_dir}/train-${NAME}.log

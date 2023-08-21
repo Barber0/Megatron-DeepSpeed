@@ -8,25 +8,28 @@ cd $proj_home_dir
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-NAME=sfllm_2b7
+NAME=sfllm_1b3
 
 NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 
-SAVE_PATH=/root/autodl-tmp/sfllm-2b7-cl
+SAVE_PATH=/root/autodl-tmp/sfllm-1b3-clean
+# SAVE_PATH=/root/autodl-tmp/sfllm-1b3-cl
 LOAD_PATH=$SAVE_PATH
 
 VOCAB_FILE=/root/gpt2_tokenizer/gpt2-vocab.json
 MERGE_FILE=/root/gpt2_tokenizer/gpt2-merges.txt
-DATA_PATH=/root/autodl-tmp/pile0204_text_document
+DATA_PATH=/root/autodl-tmp/orca_text_document
 
-BATCH_SIZE=16
-GLOBAL_BATCH_SIZE=528
+BATCH_SIZE=26
+# BATCH_SIZE=22
+GLOBAL_BATCH_SIZE=572
+
 LOG_INTERVAL=500
 
 SEQ_LEN=2048
-HIDDEN_SIZE=2560
-N_LAYERS=32
-N_HEADS=20
+HIDDEN_SIZE=2048
+N_LAYERS=24
+N_HEADS=16
 
 BILLION=1000000000
 MILLION=1000000
@@ -41,7 +44,7 @@ lr_warmup_tokens=$((${lr_warmup_tokens_in_million} * ${MILLION}))
 lr_decay_tokens_in_billion=${train_tokens_in_billion}
 lr_decay_tokens=$((${lr_decay_tokens_in_billion} * ${BILLION}))
 
-CL_ENABLED="true"
+CL_ENABLED="false"
 CL_START_SEQLEN=80
 CL_AVG_SEQLEN=$(( (${CL_START_SEQLEN} + ${SEQ_LEN}) / 2 ))
 
@@ -54,7 +57,7 @@ ZERO_STAGE=1
 DATA_EFFICIENCY_SEED=8848
 
 template_json="${script_dir}/ds_cfg_tpl.txt"
-config_json="${script_dir}ds_cfg_${NAME}.json"
+config_json="${script_dir}/ds_cfg_${NAME}.json"
 sed "s/CONFIG_BATCH_SIZE/${GLOBAL_BATCH_SIZE}/" ${template_json} \
     | sed "s/CONFIG_MBSIZE/${BATCH_SIZE}/" \
     | sed "s/LOG_INTERVAL/${LOG_INTERVAL}/" \
@@ -68,11 +71,11 @@ sed "s/CONFIG_BATCH_SIZE/${GLOBAL_BATCH_SIZE}/" ${template_json} \
 
 DS_ARGS=" \
     --deepspeed \
-    --deepspeed_config ${config_json} \
+    --deepspeed_config ${config_json} 
 "
 
-MAX_LR=2e-4
-MIN_LR=1e-5
+MAX_LR=10e-4
+MIN_LR=15e-5
 WEIGHT_DECAY=1e-1
 
 GPT_ARGS="
@@ -85,6 +88,7 @@ GPT_ARGS="
     --max-position-embeddings ${SEQ_LEN} \
     --attention-dropout 0 \
     --hidden-dropout 0 \
+    --fp16-lm-cross-entropy \
 
     --use-rotary-position-embeddings \
     --micro-batch-size ${BATCH_SIZE} \
@@ -120,21 +124,17 @@ DATA_ARGS="
 
 OUTPUT_ARGS="
     --log-interval ${LOG_INTERVAL} \
-    --save-interval 50 \
+    --save-interval 200 \
     --eval-interval 1000 \
     --eval-iters 10 \
-    --tensorboard-dir /root/mega-logs-${NAME}
+    --tensorboard-dir /root/orca-logs-1b3
 "
 
-deepspeed \
-    --master_port 3000 \
-    pretrain_gpt.py \
+deepspeed pretrain_gpt.py \
     $GPT_ARGS \
     $DATA_ARGS \
     $OUTPUT_ARGS \
     --distributed-backend nccl \
     --save $SAVE_PATH \
     --load $LOAD_PATH \
-    --no-load-optim \
-    --no-load-lr-state \
-    $DS_ARGS
+    $DS_ARGS | tee ${script_dir}/orca-${NAME}.log

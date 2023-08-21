@@ -1415,6 +1415,7 @@ def _add_zero_args(parser):
                       help='Remote device for ZeRO-3 initialized parameters.')
     group.add_argument('--use-pin-memory', action='store_true',
                      help='Use pinned CPU memory for ZeRO-3 initialized model parameters.')
+    group.add_argument('--local_rank', type=int)
     return parser
 
 def _add_memoryopt_args(parser):
