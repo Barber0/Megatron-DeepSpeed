@@ -19,14 +19,13 @@ import math
 import os
 import warnings
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.utils.checkpoint
 from torch import nn
 from torch.cuda.amp import autocast
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
-
 from transformers.activations import ACT2FN
 from transformers.generation.configuration_utils import GenerationConfig
 from transformers.generation.logits_process import LogitsProcessorList
@@ -35,25 +34,21 @@ from transformers.generation.streamers import BaseStreamer
 from transformers.generation.utils import GenerateOutput
 from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
-    CausalLMOutputWithCrossAttentions,
-    QuestionAnsweringModelOutput,
-    SequenceClassifierOutputWithPast,
-    TokenClassifierOutput,
-)
+    CausalLMOutputWithCrossAttentions, QuestionAnsweringModelOutput,
+    SequenceClassifierOutputWithPast, TokenClassifierOutput)
 from transformers.modeling_utils import PreTrainedModel, SequenceSummary
-from transformers.pytorch_utils import Conv1D, find_pruneable_heads_and_indices, prune_conv1d_layer
-from transformers.utils import (
-    ModelOutput,
-    add_code_sample_docstrings,
-    add_start_docstrings,
-    add_start_docstrings_to_model_forward,
-    logging,
-    replace_return_docstrings,
-)
-from transformers.utils.model_parallel_utils import assert_device_map, get_device_map
 from transformers.models.gpt2.configuration_gpt2 import GPT2Config
+from transformers.pytorch_utils import (Conv1D,
+                                        find_pruneable_heads_and_indices,
+                                        prune_conv1d_layer)
+from transformers.utils import (ModelOutput, add_code_sample_docstrings,
+                                add_start_docstrings,
+                                add_start_docstrings_to_model_forward, logging,
+                                replace_return_docstrings)
+from transformers.utils.model_parallel_utils import (assert_device_map,
+                                                     get_device_map)
+
 from .rotary_pos_embedding import RotaryEmbedding, apply_rotary_pos_emb
-from torch import Tensor, LongTensor
 
 logger = logging.get_logger(__name__)
 
@@ -68,6 +63,63 @@ GPT2_PRETRAINED_MODEL_ARCHIVE_LIST = [
     "distilgpt2",
     # See all GPT-2 models at https://huggingface.co/models?filter=gpt2
 ]
+
+
+def load_tf_weights_in_gpt2(model, config, gpt2_checkpoint_path):
+    """Load tf checkpoints in a pytorch model"""
+    try:
+        import re
+
+        import tensorflow as tf
+    except ImportError:
+        logger.error(
+            "Loading a TensorFlow model in PyTorch, requires TensorFlow to be installed. Please see "
+            "https://www.tensorflow.org/install/ for installation instructions."
+        )
+        raise
+    tf_path = os.path.abspath(gpt2_checkpoint_path)
+    logger.info(f"Converting TensorFlow checkpoint from {tf_path}")
+    # Load weights from TF model
+    init_vars = tf.train.list_variables(tf_path)
+    names = []
+    arrays = []
+    for name, shape in init_vars:
+        logger.info(f"Loading TF weight {name} with shape {shape}")
+        array = tf.train.load_variable(tf_path, name)
+        names.append(name)
+        arrays.append(array.squeeze())
+
+    for name, array in zip(names, arrays):
+        name = name[6:]  # skip "model/"
+        name = name.split("/")
+        pointer = model
+        for m_name in name:
+            if re.fullmatch(r"[A-Za-z]+\d+", m_name):
+                scope_names = re.split(r"(\d+)", m_name)
+            else:
+                scope_names = [m_name]
+            if scope_names[0] == "w" or scope_names[0] == "g":
+                pointer = getattr(pointer, "weight")
+            elif scope_names[0] == "b":
+                pointer = getattr(pointer, "bias")
+            elif scope_names[0] == "wpe" or scope_names[0] == "wte":
+                pointer = getattr(pointer, scope_names[0])
+                pointer = getattr(pointer, "weight")
+            else:
+                pointer = getattr(pointer, scope_names[0])
+            if len(scope_names) >= 2:
+                num = int(scope_names[1])
+                pointer = pointer[num]
+        try:
+            if pointer.shape != array.shape:
+                raise ValueError(
+                    f"Pointer shape {pointer.shape} and array shape {array.shape} mismatched")
+        except ValueError as e:
+            e.args += (pointer.shape, array.shape)
+            raise
+        logger.info(f"Initialize PyTorch weight {name}")
+        pointer.data = torch.from_numpy(array)
+    return model
 
 
 class GPT2Attention(nn.Module):
@@ -157,14 +209,10 @@ class GPT2Attention(nn.Module):
                 [], mask_value, dtype=attn_weights.dtype).to(attn_weights.device)
             attn_weights = torch.where(
                 causal_mask, attn_weights.to(attn_weights.dtype), mask_value)
-            if attention_mask is not None:
-                attn_weights = torch.where(
-                    attention_mask == 0, attn_weights, mask_value
-                )
 
-        # if attention_mask is not None:
-        #     # Apply the attention mask
-        #     attn_weights = attn_weights + attention_mask
+        if attention_mask is not None:
+            attn_weights = torch.where(
+                attention_mask == 0, attn_weights, mask_value)
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1)
 
@@ -296,7 +344,7 @@ class GPT2Attention(nn.Module):
             value = torch.cat((past_value, value), dim=-2)
 
         if use_cache is True:
-            present = (key.clone(), value.clone())
+            present = (key, value)
         else:
             present = None
 
@@ -427,6 +475,7 @@ class GPT2PreTrainedModel(PreTrainedModel):
     """
 
     config_class = GPT2Config
+    load_tf_weights = load_tf_weights_in_gpt2
     base_model_prefix = "transformer"
     is_parallelizable = True
     supports_gradient_checkpointing = True
@@ -653,7 +702,7 @@ DEPARALLELIZE_DOCSTRING = r"""
     GPT2_START_DOCSTRING,
 )
 class GPT2Model(GPT2PreTrainedModel):
-    def __init__(self, config: GPT2Config):
+    def __init__(self, config):
         super().__init__(config)
 
         self.embed_dim = config.hidden_size
@@ -1076,10 +1125,6 @@ class GPT2LMHeadModel(GPT2PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
-        # print('-----1', attention_mask)
-        # print('-----2', token_type_ids)
-        # print('-----3', position_ids)
-        # print('-----4', head_mask)
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
             Labels for language modeling. Note that the labels **are shifted** inside the model, i.e. you can set
